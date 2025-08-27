@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Bubble Popper AR Game</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+<style>
+html, body { 
+  margin:0; padding:0; width:100%; height:100%; overflow:hidden; 
+  background:linear-gradient(135deg,#0f1c2c,#1c3a5a,#2a4b7c); 
+  display:flex; flex-direction:column; align-items:center; justify-content:flex-start; 
+  font-family:sans-serif; color:#e0e0e0; 
+}
+
+h1 { font-size:2rem; margin:10px; text-align:center; color:#ffffff; }
+
+.stats { display:flex; justify-content:space-around; width:100%; padding:0 10px; margin-bottom:5px; }
+.stat-box { text-align:center; flex:1; }
+.stat-value { font-size:1.8rem; color:#00d8ff; }
+.stat-label { font-size:0.9rem; opacity:0.8; }
+
+.controls-row { display:flex; justify-content:center; gap:10px; width:100%; padding:0 10px; margin-bottom:5px; }
+.btn { 
+  padding:10px 20px; border:none; border-radius:50px; cursor:pointer; 
+  background:linear-gradient(to right,#1c3a5a,#3a5a8c); color:white; font-size:1rem; 
+  flex:1; max-width:300px; transition: transform 0.1s, box-shadow 0.1s;
+}
+.btn:active {
+  transform: scale(0.95);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3) inset;
+}
+
+.camera-view { position:relative; width:100%; flex:1; }
+#webcam { position:absolute; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:none; }
+#output-canvas { position:absolute; width:100%; height:100%; left:0; top:0; transform:scaleX(-1); }
+#game-canvas { position:absolute; width:100%; height:100%; left:0; top:0; }
+
+.popup-container { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); display:flex; justify-content:center; align-items:center; opacity:0; pointer-events:none; transition:0.25s; z-index:50; }
+.popup-container.active { opacity:1; pointer-events:all; }
+.popup { 
+  background:linear-gradient(135deg,#1c3a5a,#3a5a8c); 
+  padding:20px; border-radius:15px; text-align:center; max-width:380px; width:90%; 
+  color:white; transform:translateY(40px); opacity:0; transition:0.3s; 
+}
+.popup-container.active .popup { transform:translateY(0); opacity:1; }
+.popup h2 { font-size:1.6rem; margin-bottom:10px; color:#FF0033; }
+.popup .popup-buttons { display:flex; justify-content:center; }
+.popup .popup-btn { 
+  padding:10px 20px; border:none; border-radius:50px; cursor:pointer; font-size:1rem; 
+  background:linear-gradient(to right,#FF0033,#CC0029); color:white; transition: transform 0.1s, box-shadow 0.1s;
+}
+.popup .popup-btn:active {
+  transform: scale(0.95);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3) inset;
+}
+
+/* Intro Screen */
+#introScreen {
+  position:absolute; top:0; left:0; width:100%; height:100%;
+  background:#0f1c2c; z-index:1000; display:flex; flex-direction:column;
+  justify-content:center; align-items:center; color:white; text-align:center;
+}
+#introScreen h1 { font-size:3rem; margin-bottom:10px; color:#FF0033; }
+#introScreen p { font-size:1.5rem; margin:5px 0; }
+#introScreen a { color:#FF5555; font-size:1.2rem; margin-top:15px; text-decoration:underline; }
+</style>
+</head>
+<body>
+
+<!-- Intro Screen -->
+<div id="introScreen">
+  <h1>Bubble Popper AR</h1>
+  <p>Version: 1.0</p>
+  <p>For a better experience, turn on desktop mode</p>
+  <a href="https://sites.google.com/view/sheikh-hozaifa/home" target="_blank">About Developer</a>
+  <p>Game Starting.....</p>
+</div>
+
+<h1>Bubble Popper AR</h1>
+
+<div class="camera-permission">
+  <button id="permission-btn" class="btn">Allow Camera Access</button>
+  <p id="camera-error" style="color:red;display:none;">Camera not available</p>
+</div>
+
+<div class="stats">
+  <div class="stat-box"><div id="score" class="stat-value">0</div><div class="stat-label">SCORE</div></div>
+  <div class="stat-box"><div id="timer" class="stat-value">60</div><div class="stat-label">TIME</div></div>
+</div>
+
+<div class="controls-row">
+  <button id="start-btn" class="btn" disabled style="display:none;">Start Game</button>
+  <button id="pause-btn" class="btn" style="display:none;">Pause</button>
+</div>
+
+<div class="camera-view">
+  <video id="webcam" autoplay playsinline></video>
+  <canvas id="output-canvas"></canvas>
+  <canvas id="game-canvas"></canvas>
+</div>
+
+<div class="popup-container" id="popup-container">
+  <div class="popup">
+    <h2>Game Over!</h2>
+    <p id="popup-message"></p>
+    <div class="popup-buttons">
+      <button class="popup-btn" id="popup-play-again">Play Again</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// **Intro Screen Logic**
+const introScreen = document.getElementById('introScreen');
+setTimeout(() => { introScreen.style.display = 'none'; }, 10000);
+
+// **Copy Restriction System**
+document.addEventListener('selectstart', e => e.preventDefault());
+document.addEventListener('mousedown', e => e.preventDefault());
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('copy', e => e.preventDefault());
+document.addEventListener('cut', e => e.preventDefault());
+document.addEventListener('dragstart', e => e.preventDefault());
+</script>
+
+<script>
+// === Game Code ===
+let score=0, timer=60, gameActive=false, paused=false, bubbles=[], indexFingerX=0, indexFingerY=0;
+let animationFrameId=null, lastTimestamp=0, timerInterval=null;
+let hands=null, camera=null;
+
+const gameCanvas=document.getElementById('game-canvas'), ctx=gameCanvas.getContext('2d');
+const outputCanvas=document.getElementById('output-canvas'), outputCtx=outputCanvas.getContext('2d');
+const scoreElement=document.getElementById('score'), timerElement=document.getElementById('timer');
+const startButton=document.getElementById('start-btn'), pauseButton=document.getElementById('pause-btn');
+const permissionButton=document.getElementById('permission-btn'), webcamElement=document.getElementById('webcam');
+const cameraError=document.getElementById('camera-error');
+const popupContainer=document.getElementById('popup-container'), popupMessage=document.getElementById('popup-message');
+const popupPlayAgain=document.getElementById('popup-play-again');
+
+function resizeCanvasFull(){
+  gameCanvas.width=window.innerWidth; gameCanvas.height=window.innerHeight;
+  outputCanvas.width=window.innerWidth; outputCanvas.height=window.innerHeight;
+}
+window.addEventListener('resize',resizeCanvasFull);
+resizeCanvasFull();
+
+class Bubble{
+  constructor(){ this.reset(); }
+  reset(){ 
+    this.radius=Math.random()*30+25;
+    this.x=Math.random()*gameCanvas.width;
+    this.y=gameCanvas.height+Math.random()*50; 
+    this.speed=Math.random()*150+80;
+    this.color=this.getRandomColor();
+    this.popped=false;
+    this.progress=0;
+  }
+  getRandomColor(){ 
+    const c=[
+      'rgba(255,0,51,0.7)',
+      'rgba(0,255,102,0.7)',
+      'rgba(0,204,255,0.7)',
+      'rgba(255,255,0,0.7)'
+    ]; 
+    return c[Math.floor(Math.random()*c.length)]; 
+  }
+  update(delta){
+    if(this.popped){ 
+      this.progress += delta*60; 
+      if(this.progress>15) this.reset(); 
+      return; 
+    }
+    if(!paused && gameActive) this.y -= this.speed*delta;
+    if(this.y + this.radius < 0) this.reset();
+
+    if(!this.popped && gameActive && !paused){
+      const dx = indexFingerX - this.x;
+      const dy = indexFingerY - this.y;
+      const playerRadius = 80;
+      if(Math.hypot(dx, dy) < this.radius + playerRadius){ 
+        this.popped = true; 
+        this.progress = 0; 
+        score += Math.floor(this.radius/2); 
+        scoreElement.textContent = score; 
+      }
+    }
+  }
+  draw(){
+    ctx.beginPath(); 
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); 
+    ctx.fillStyle = this.color; 
+    ctx.fill(); 
+    ctx.closePath();
+  }
+}
+
+function initBubbles(count=10){ bubbles=[]; for(let i=0;i<count;i++) bubbles.push(new Bubble()); }
+
+function gameLoop(timestamp){
+  if(!lastTimestamp) lastTimestamp=timestamp;
+  const delta=Math.min(0.05,(timestamp-lastTimestamp)/1000); lastTimestamp=timestamp;
+
+  ctx.clearRect(0,0,gameCanvas.width,gameCanvas.height);
+  ctx.fillStyle='rgba(25,25,50,0.0)'; ctx.fillRect(0,0,gameCanvas.width,gameCanvas.height); 
+
+  for(let b of bubbles){ if(!paused) b.update(delta); b.draw(); }
+
+  if(gameActive){
+    ctx.beginPath(); 
+    ctx.arc(indexFingerX,indexFingerY,20,0,Math.PI*2); 
+    ctx.fillStyle='rgba(255,0,51,0.9)'; 
+    ctx.fill(); 
+    ctx.closePath();
+
+    ctx.beginPath(); 
+    ctx.arc(indexFingerX,indexFingerY,80,0,Math.PI*2); 
+    ctx.strokeStyle='rgba(255,0,51,0.6)'; 
+    ctx.lineWidth=3; 
+    ctx.stroke(); 
+    ctx.closePath();
+  }
+
+  animationFrameId=requestAnimationFrame(gameLoop);
+}
+
+function startTimer(){
+  clearInterval(timerInterval);
+  timerInterval=setInterval(()=>{
+    if(gameActive && !paused){
+      if(timer>0){ timer--; timerElement.textContent=timer; }
+      else{ clearInterval(timerInterval); gameActive=false; showGameOverPopup(); pauseButton.style.display='none'; }
+    }
+  },1000);
+}
+
+function setPaused(p){ paused=p; pauseButton.textContent=p?'Resume':'Pause'; }
+
+function showGameOverPopup(){ popupMessage.textContent=`Your final score: ${score}`; popupContainer.classList.add('active'); }
+function hideGameOverPopup(){ popupContainer.classList.remove('active'); }
+
+function onResults(results){
+  outputCtx.save(); 
+  outputCtx.clearRect(0,0,outputCanvas.width,outputCanvas.height);
+  outputCtx.drawImage(results.image,0,0,outputCanvas.width,outputCanvas.height);
+
+  if(results.multiHandLandmarks){
+    for(const landmarks of results.multiHandLandmarks){
+      window.drawConnectors(outputCtx,landmarks,window.HAND_CONNECTIONS,{color:'#FF0033', lineWidth:4});
+      window.drawLandmarks(outputCtx,landmarks,{color:'#FF0033', lineWidth:2, radius:5});
+      const index=landmarks[8]; 
+      indexFingerX=(1-index.x)*gameCanvas.width; 
+      indexFingerY=index.y*gameCanvas.height;
+    }
+  }
+  outputCtx.restore();
+}
+
+function initHands(){
+  hands=new window.Hands({locateFile:file=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+  hands.setOptions({maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.8, minTrackingConfidence:0.8});
+  hands.onResults(onResults);
+  return hands;
+}
+
+// --- Max resolution webcam ---
+function startWebcam(){
+  navigator.mediaDevices.getUserMedia({
+    video:{ facingMode:'user', width:{ideal:1920}, height:{ideal:1080} }
+  })
+    .then(stream=>{
+      webcamElement.srcObject=stream; 
+      webcamElement.style.display='block'; 
+      cameraError.style.display='none';
+      startButton.disabled=false; 
+      startButton.style.display='inline-block';
+      permissionButton.style.display='none'; 
+      pauseButton.style.display='none';
+      hands=initHands();
+      camera=new Camera(webcamElement,{
+        onFrame:async()=>{if(hands && gameActive) await hands.send({image:webcamElement});}, 
+        width:1920, 
+        height:1080
+      });
+      camera.start();
+    })
+    .catch(err=>{
+      cameraError.style.display='block'; 
+      cameraError.textContent='Camera access denied'; 
+      startButton.style.display='none'; 
+      permissionButton.style.display='inline-block';
+    });
+}
+
+function startGame(){
+  if(!hands) return;
+  score=0; timer=60; gameActive=true; setPaused(false); scoreElement.textContent=score; timerElement.textContent=timer;
+  initBubbles(8); lastTimestamp=0; cancelAnimationFrame(animationFrameId); animationFrameId=requestAnimationFrame(gameLoop);
+  startTimer(); hideGameOverPopup();
+  startButton.textContent='Reset Game'; pauseButton.style.display='inline-block';
+}
+
+pauseButton.addEventListener('click',()=>{ if(gameActive) setPaused(!paused); });
+permissionButton.addEventListener('click',startWebcam);
+startButton.addEventListener('click',startGame);
+popupPlayAgain.addEventListener('click',()=>{ hideGameOverPopup(); startGame(); });
+</script>
+</body>
+</html>
